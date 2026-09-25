@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scan Kehadiran - War Tiket TST GO Kasuari</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #ffffff;
+        }
+
+        .gold-text-gradient {
+            background: linear-gradient(to right, #D4AF37, #F3E5AB, #D4AF37);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .gold-border { border-color: #D4AF37; }
+        .red-theme { background-color: #A30000; }
+        .red-text { color: #A30000; }
+
+        .custom-shadow {
+            box-shadow: 0 10px 25px -5px rgba(163, 0, 0, 0.15), 0 8px 10px -6px rgba(212, 175, 55, 0.2);
+        }
+
+        #qr-reader { border-radius: 0.75rem; overflow: hidden; }
+        #qr-reader video { border-radius: 0.75rem; width: 100% !important; }
+
+        .result-card { display: none; }
+        .result-card.show { display: block; }
+
+        .check-circle, .check-mark, .fail-circle, .fail-line {
+            stroke-dasharray: 160;
+            stroke-dashoffset: 160;
+        }
+        .anim-play .check-circle { animation: draw 0.4s ease forwards; }
+        .anim-play .check-mark   { animation: draw 0.3s ease 0.4s forwards; }
+        .anim-play .fail-circle  { animation: draw 0.4s ease forwards; }
+        .anim-play .fail-line-1  { animation: draw 0.25s ease 0.4s forwards; }
+        .anim-play .fail-line-2  { animation: draw 0.25s ease 0.6s forwards; }
+        @keyframes draw { to { stroke-dashoffset: 0; } }
+
+        select:disabled, button:disabled { opacity: 0.6; cursor: not-allowed; }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-3 sm:p-4 py-8">
+
+    <div class="w-full max-w-md bg-white rounded-2xl p-5 sm:p-8 custom-shadow border-t-8 border-b-8 border-t-[#A30000] border-b-[#D4AF37]">
+
+        <div class="text-center mb-6">
+            <h1 class="text-2xl sm:text-3xl font-extrabold uppercase tracking-wider red-text mb-1">Scan Kehadiran</h1>
+            <h2 class="text-lg sm:text-xl font-bold uppercase gold-text-gradient tracking-widest">TST GO Kasuari</h2>
+            <div class="w-16 h-1 mx-auto mt-3 bg-[#D4AF37] rounded-full"></div>
+        </div>
+
+        <!-- ==== PANEL 1: PILIH SESI ==== -->
+        <div id="panelPilihSesi">
+            <label for="sesiSelect" class="block text-sm font-semibold text-gray-700 mb-1 ml-1">Pilih Sesi yang Sedang Berlangsung</label>
+            <div class="relative mb-4">
+                <select id="sesiSelect" disabled
+                    class="w-full px-4 py-3 rounded-lg border-2 border-gray-200 focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] bg-gray-50 text-gray-800 appearance-none cursor-pointer">
+                    <option value="" disabled selected>-- Memuat sesi --</option>
+                </select>
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 pt-6 text-[#A30000]">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                </div>
+            </div>
+            <button id="mulaiScanBtn" disabled
+                class="w-full py-4 rounded-lg red-theme text-[#F3E5AB] font-bold text-lg tracking-wide uppercase hover:bg-red-900 transition-colors shadow-lg border-2 gold-border">
+                Mulai Scan
+            </button>
+            <p id="loadNotice" class="text-center text-sm text-gray-500 mt-3">Memuat daftar sesi...</p>
+        </div>
+
+        <!-- ==== PANEL 2: SEDANG SCAN (live camera) ==== -->
+        <div id="panelScan" class="hidden">
+            <div class="flex items-center justify-between mb-3">
+                <div>
+                    <p class="text-xs text-gray-400">Sesi aktif</p>
+                    <p id="sesiAktifLabel" class="font-bold text-gray-800 text-sm"></p>
+                </div>
+                <button id="gantiSesiBtn" class="text-xs font-semibold text-[#A30000] underline">Ganti Sesi</button>
+            </div>
+
+            <div id="qr-reader" class="w-full mb-3"></div>
+
+            <p class="text-center text-sm text-gray-500 mb-1">Total tercatat hadir sesi ini: <span id="counterHadir" class="font-bold red-text">0</span></p>
+            <p id="kameraError" class="text-center text-sm text-red-600 hidden"></p>
+        </div>
+
+        <!-- ==== KARTU HASIL SCAN ==== -->
+        <div id="resultCard" class="result-card mt-4 rounded-xl p-4 border-2 text-center">
+            <div class="w-14 h-14 mx-auto mb-2">
+                <svg id="resultIconSuccess" viewBox="0 0 60 60" class="w-full h-full hidden">
+                    <circle class="check-circle" cx="30" cy="30" r="26" fill="none" stroke="#16a34a" stroke-width="3"/>
+                    <path class="check-mark" d="M17 31 L26 40 L44 20" fill="none" stroke="#16a34a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <svg id="resultIconFail" viewBox="0 0 60 60" class="w-full h-full hidden">
+                    <circle class="fail-circle" cx="30" cy="30" r="26" fill="none" stroke="#dc2626" stroke-width="3"/>
+                    <line class="fail-line fail-line-1" x1="20" y1="20" x2="40" y2="40" stroke="#dc2626" stroke-width="3" stroke-linecap="round"/>
+                    <line class="fail-line fail-line-2" x1="40" y1="20" x2="20" y2="40" stroke="#dc2626" stroke-width="3" stroke-linecap="round"/>
+                </svg>
+            </div>
+            <p id="resultTitle" class="font-extrabold text-sm mb-1"></p>
+            <div id="resultDetail" class="text-sm text-gray-600 space-y-0.5"></div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        // GANTI URL INI dengan URL deployment Apps Script kamu sendiri
+        // (yang diakhiri /exec). Ambil dari Deploy > Manage deployments.
+        // ============================================================
+        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyzlQjxc3QoC3ZDczIgLEzx7V0ign7kmg0gJZv3--7MB4lwU8kvfDSkjunBFv0qy196Mg/exec';
+
+        // ---- JSONP helper: cara manggil Apps Script tanpa kena masalah CORS ----
+        function jsonpRequest(params, onSuccess, onError) {
+            const cbName = 'jsonp_cb_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
+            let selesai = false;
+
+            window[cbName] = function (data) {
+                selesai = true;
+                cleanup();
+                onSuccess(data);
+            };
+
+            const query = Object.keys(params)
+                .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); })
+                .join('&');
+
+            const script = document.createElement('script');
+            script.src = APPS_SCRIPT_URL + '?' + query + '&callback=' + cbName;
+            script.onerror = function () {
+                if (selesai) return;
+                cleanup();
+                onError(new Error('Gagal terhubung ke server'));
+            };
+
+            function cleanup() {
+                delete window[cbName];
+                if (script.parentNode) script.parentNode.removeChild(script);
+            }
+
+            document.body.appendChild(script);
+
+            // Jaring pengaman: kalau dalam 15 detik tidak ada respons sama sekali
+            setTimeout(function () {
+                if (!selesai) {
+                    cleanup();
+                    onError(new Error('Waktu tunggu server habis'));
+                }
+            }, 15000);
+        }
+
+        const panelPilihSesi = document.getElementById('panelPilihSesi');
+        const panelScan      = document.getElementById('panelScan');
+        const sesiSelect     = document.getElementById('sesiSelect');
+        const mulaiScanBtn   = document.getElementById('mulaiScanBtn');
+        const gantiSesiBtn   = document.getElementById('gantiSesiBtn');
+        const loadNotice     = document.getElementById('loadNotice');
+        const sesiAktifLabel = document.getElementById('sesiAktifLabel');
+        const counterHadir   = document.getElementById('counterHadir');
+        const kameraError    = document.getElementById('kameraError');
+
+        const resultCard    = document.getElementById('resultCard');
+        const resultTitle   = document.getElementById('resultTitle');
+        const resultDetail  = document.getElementById('resultDetail');
+        const resultIconSuccess = document.getElementById('resultIconSuccess');
+        const resultIconFail    = document.getElementById('resultIconFail');
+
+        let daftarSesi = [];
+        let sesiTerpilih = null;
+        let html5QrCode = null;
+        let sedangProses = false;
+        let jumlahHadir = 0;
+
+        function loadSesi() {
+            jsonpRequest({ action: 'sesi' }, populateSesi, function () {
+                loadNotice.textContent = 'Gagal memuat daftar sesi. Muat ulang halaman.';
+                loadNotice.classList.add('text-red-600');
+            });
+        }
+
+        function populateSesi(list) {
+            daftarSesi = list || [];
+            sesiSelect.innerHTML = '';
+
+            if (daftarSesi.length === 0) {
+                sesiSelect.add(new Option('-- Belum ada jadwal di Manifest_Jadwal --', ''));
+                loadNotice.textContent = 'Belum ada jadwal TST yang bisa dipilih.';
+                return;
+            }
+
+            const placeholder = new Option('-- Pilih Sesi --', '', true, true);
+            placeholder.disabled = true;
+            sesiSelect.add(placeholder);
+
+            daftarSesi.forEach(function (s, idx) {
+                sesiSelect.add(new Option(s.label, String(idx)));
+            });
+
+            sesiSelect.disabled = false;
+            loadNotice.textContent = '';
+        }
+
+        sesiSelect.addEventListener('change', function () {
+            mulaiScanBtn.disabled = sesiSelect.value === '';
+        });
+
+        mulaiScanBtn.addEventListener('click', function () {
+            const idx = Number(sesiSelect.value);
+            sesiTerpilih = daftarSesi[idx];
+            if (!sesiTerpilih) return;
+
+            sesiAktifLabel.textContent = sesiTerpilih.label;
+            jumlahHadir = 0;
+            counterHadir.textContent = '0';
+            kameraError.classList.add('hidden');
+            resultCard.classList.remove('show');
+
+            panelPilihSesi.classList.add('hidden');
+            panelScan.classList.remove('hidden');
+
+            mulaiKamera();
+        });
+
+        gantiSesiBtn.addEventListener('click', function () {
+            hentikanKamera(function () {
+                panelScan.classList.add('hidden');
+                panelPilihSesi.classList.remove('hidden');
+                resultCard.classList.remove('show');
+            });
+        });
+
+        function mulaiKamera() {
+            html5QrCode = new Html5Qrcode('qr-reader');
+            html5QrCode.start(
+                { facingMode: 'environment' },
+                { fps: 10, qrbox: { width: 240, height: 240 } },
+                onScanSuccess,
+                function () { /* dipanggil tiap frame tanpa QR terdeteksi, sengaja diabaikan */ }
+            ).catch(function (err) {
+                kameraError.textContent = 'Tidak bisa mengakses kamera. Pastikan izin kamera sudah diizinkan di browser. (' + err + ')';
+                kameraError.classList.remove('hidden');
+            });
+        }
+
+        function hentikanKamera(callback) {
+            if (html5QrCode) {
+                html5QrCode.stop().then(function () {
+                    html5QrCode.clear();
+                    html5QrCode = null;
+                    if (callback) callback();
+                }).catch(function () {
+                    html5QrCode = null;
+                    if (callback) callback();
+                });
+            } else if (callback) {
+                callback();
+            }
+        }
+
+        function onScanSuccess(decodedText) {
+            if (sedangProses || !sesiTerpilih) return;
+            sedangProses = true;
+
+            jsonpRequest({
+                action: 'scan',
+                token: decodedText,
+                mapel: sesiTerpilih.mapel,
+                tanggal: sesiTerpilih.tanggal,
+                jam: sesiTerpilih.jam
+            }, handleScanResult, function () {
+                handleScanResult({ success: false, message: 'GAGAL TERHUBUNG KE SERVER', reason: 'error_koneksi' });
+            });
+        }
+
+        function handleScanResult(res) {
+            tampilkanHasil(res);
+            if (res.success) {
+                jumlahHadir++;
+                counterHadir.textContent = String(jumlahHadir);
+            }
+            setTimeout(function () {
+                resultCard.classList.remove('show');
+                resultCard.classList.remove('anim-play');
+                sedangProses = false;
+            }, 2500);
+        }
+
+        function tampilkanHasil(res) {
+            resultIconSuccess.classList.add('hidden');
+            resultIconFail.classList.add('hidden');
+            resultDetail.innerHTML = '';
+
+            if (res.success) {
+                resultCard.className = 'result-card show mt-4 rounded-xl p-4 border-2 text-center bg-green-50 border-green-400';
+                resultIconSuccess.classList.remove('hidden');
+                resultTitle.textContent = 'KEHADIRAN TERCATAT';
+                resultTitle.className = 'font-extrabold text-sm mb-1 text-green-700';
+                resultDetail.innerHTML =
+                    '<div class="font-bold text-gray-800">' + res.data.nama + '</div>' +
+                    '<div>' + res.data.noreg + ' • ' + res.data.kelas + '</div>' +
+                    '<div>' + res.data.mapel + ' — ' + res.data.jam + '</div>';
+            } else {
+                resultCard.className = 'result-card show mt-4 rounded-xl p-4 border-2 text-center bg-red-50 border-red-400';
+                resultIconFail.classList.remove('hidden');
+                resultTitle.textContent = res.message || 'GAGAL';
+                resultTitle.className = 'font-extrabold text-sm mb-1 text-red-700';
+
+                if (res.reason === 'sesi_tidak_cocok' && res.data) {
+                    resultDetail.innerHTML =
+                        '<div class="font-bold text-gray-800">' + res.data.nama + ' (' + res.data.noreg + ')</div>' +
+                        '<div>Terdaftar di: <b>' + res.data.mapelAsli + ' — ' + res.data.jamAsli + '</b></div>' +
+                        '<div>Bukan sesi yang sedang dipilih. Kehadiran dibatalkan.</div>';
+                } else if (res.reason === 'sudah_absen' && res.data) {
+                    resultDetail.innerHTML =
+                        '<div class="font-bold text-gray-800">' + res.data.nama + ' (' + res.data.noreg + ')</div>' +
+                        '<div>Sudah tercatat hadir sebelumnya utk sesi ini.</div>';
+                } else if (res.reason === 'token_tidak_valid') {
+                    resultDetail.innerHTML = '<div>QR ini tidak terdaftar di sistem.</div>';
+                } else {
+                    resultDetail.innerHTML = '<div>Silakan coba scan ulang.</div>';
+                }
+            }
+
+            void resultCard.offsetWidth; // reflow supaya animasi ceklis/silang bisa diulang tiap scan
+            resultCard.classList.add('anim-play');
+        }
+
+        loadSesi();
+    </script>
+</body>
+</html>

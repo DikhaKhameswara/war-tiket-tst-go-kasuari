@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>War Tiket TST GO Kasuari</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #ffffff;
+        }
+
+        .gold-text-gradient {
+            background: linear-gradient(to right, #D4AF37, #F3E5AB, #D4AF37);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .gold-border { border-color: #D4AF37; }
+        .red-theme { background-color: #A30000; }
+        .red-text { color: #A30000; }
+
+        .custom-shadow {
+            box-shadow: 0 10px 25px -5px rgba(163, 0, 0, 0.15), 0 8px 10px -6px rgba(212, 175, 55, 0.2);
+        }
+
+        /* ==== Animasi ceklis (modal sukses) ==== */
+        .check-circle, .check-mark {
+            stroke-dasharray: 160;
+            stroke-dashoffset: 160;
+        }
+        .anim-play .check-circle { animation: draw 0.5s ease forwards; }
+        .anim-play .check-mark   { animation: draw 0.35s ease 0.5s forwards; }
+
+        /* ==== Animasi silang (modal gagal) ==== */
+        .fail-circle, .fail-line {
+            stroke-dasharray: 160;
+            stroke-dashoffset: 160;
+        }
+        .anim-play .fail-circle { animation: draw 0.5s ease forwards; }
+        .anim-play .fail-line-1 { animation: draw 0.3s ease 0.5s forwards; }
+        .anim-play .fail-line-2 { animation: draw 0.3s ease 0.7s forwards; }
+
+        @keyframes draw {
+            to { stroke-dashoffset: 0; }
+        }
+
+        .modal-panel {
+            opacity: 0;
+            transform: scale(0.95);
+            transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+        .modal-panel.show {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        select:disabled, input:disabled, button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-3 sm:p-4 py-8">
+
+    <!-- Main Card Container -->
+    <div class="w-full max-w-lg bg-white rounded-2xl p-5 sm:p-8 relative custom-shadow border-t-8 border-b-8 border-t-[#A30000] border-b-[#D4AF37]">
+
+        <div class="text-center mb-8">
+            <h1 class="text-3xl sm:text-4xl font-extrabold uppercase tracking-wider red-text drop-shadow-sm mb-2">
+                War Tiket
+            </h1>
+            <h2 class="text-2xl sm:text-3xl font-bold uppercase gold-text-gradient tracking-widest drop-shadow-md">
+                TST GO Kasuari
+            </h2>
+            <div class="w-16 h-1 mx-auto mt-4 bg-[#D4AF37] rounded-full"></div>
+        </div>
+
+        <!-- Notifikasi memuat / error data awal -->
+        <div id="loadNotice" class="text-center text-sm text-gray-500 mb-4">Memuat jadwal TST...</div>
+
+        <form id="bookingForm" class="space-y-5">
+
+            <div class="relative">
+                <label for="nama" class="block text-sm font-semibold text-gray-700 mb-1 ml-1">Nama Lengkap</label>
+                <input type="text" id="nama" name="nama" required
+                    class="w-full px-4 py-3 rounded-lg border-2 border-gray-200 focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all bg-gray-50 focus:bg-white text-gray-800 placeholder-gray-400"
+                    placeholder="Masukkan nama lengkap Anda">
+            </div>
+
+            <div class="relative">
+                <label for="noreg" class="block text-sm font-semibold text-gray-700 mb-1 ml-1">Nomor Registrasi</label>
+                <input type="text" id="noreg" name="noreg" required
+                    class="w-full px-4 py-3 rounded-lg border-2 border-gray-200 focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all bg-gray-50 focus:bg-white text-gray-800 placeholder-gray-400"
+                    placeholder="Contoh: 2026001">
+            </div>
+
+            <!-- Asal Kelas: dropdown, diisi dari sheet List_Asal_Kelas -->
+            <div class="relative">
+                <label for="kelas" class="block text-sm font-semibold text-gray-700 mb-1 ml-1">Asal Kelas</label>
+                <select id="kelas" name="kelas" required disabled
+                    class="w-full px-4 py-3 rounded-lg border-2 border-gray-200 focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all bg-gray-50 focus:bg-white text-gray-800 appearance-none cursor-pointer">
+                    <option value="" disabled selected>-- Memuat data kelas --</option>
+                </select>
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 pt-6 text-[#A30000]">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                </div>
+            </div>
+
+            <!-- Pilihan TST: dropdown, diisi dari sheet Manifest_Jadwal (hanya yang kuotanya masih ada) -->
+            <div class="relative">
+                <label for="tst" class="block text-sm font-semibold text-gray-700 mb-1 ml-1">Pilihan TST</label>
+                <select id="tst" name="tst" required disabled
+                    class="w-full px-4 py-3 rounded-lg border-2 border-gray-200 focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all bg-gray-50 focus:bg-white text-gray-800 appearance-none cursor-pointer">
+                    <option value="" disabled selected>-- Memuat jadwal --</option>
+                </select>
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 pt-6 text-[#A30000]">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                </div>
+            </div>
+
+            <button type="submit" id="submitBtn" disabled
+                class="w-full mt-6 py-4 rounded-lg red-theme text-[#F3E5AB] font-bold text-lg tracking-wide uppercase hover:bg-red-900 transition-colors shadow-lg hover:shadow-xl border-2 gold-border transform hover:-translate-y-0.5 duration-200">
+                Amankan Tiket
+            </button>
+        </form>
+    </div>
+
+    <!-- ================= MODAL SUKSES ================= -->
+    <div id="successModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden p-3 sm:p-4 overflow-y-auto">
+        <div class="modal-panel bg-white rounded-xl p-5 sm:p-8 max-w-md w-full text-center shadow-2xl border-2 gold-border my-auto max-h-[92vh] overflow-y-auto">
+            <div class="w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-3">
+                <svg id="checkSvg" viewBox="0 0 60 60" class="w-full h-full">
+                    <circle class="check-circle" cx="30" cy="30" r="26" fill="none" stroke="#16a34a" stroke-width="3"/>
+                    <path class="check-mark" d="M17 31 L26 40 L44 20" fill="none" stroke="#16a34a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <h3 class="text-lg sm:text-xl font-extrabold red-text mb-1 leading-snug">PENDAFTARAN TST BERHASIL</h3>
+            <p class="text-sm font-semibold text-gray-600 mb-5">SILAKAN DATANG TEPAT WAKTU</p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center text-left border-t border-b border-gray-100 py-5">
+                <div class="flex flex-row sm:flex-col items-center justify-center gap-3 sm:gap-2">
+                    <img id="qrImage" src="" alt="QR Tiket" class="w-28 h-28 sm:w-40 sm:h-40 border-4 border-[#D4AF37] rounded-lg flex-shrink-0">
+                    <span class="text-xs sm:text-sm font-bold red-text sm:mt-1">Silakan<br class="sm:hidden">Screenshot!</span>
+                </div>
+                <div class="space-y-2 text-sm">
+                    <div><span class="block text-gray-400 text-xs">Nomor Registrasi</span><span id="resNoreg" class="font-bold text-gray-800"></span></div>
+                    <div><span class="block text-gray-400 text-xs">Nama Lengkap</span><span id="resNama" class="font-bold text-gray-800"></span></div>
+                    <div><span class="block text-gray-400 text-xs">Asal Kelas</span><span id="resKelas" class="font-bold text-gray-800"></span></div>
+                    <div><span class="block text-gray-400 text-xs">Mapel TST</span><span id="resMapel" class="font-bold text-gray-800"></span></div>
+                    <div><span class="block text-gray-400 text-xs">Jadwal</span><span id="resJadwal" class="font-bold text-gray-800"></span></div>
+                </div>
+            </div>
+
+            <button id="closeSuccessBtn" class="w-full mt-6 py-2.5 rounded-lg red-theme text-[#F3E5AB] font-bold hover:bg-red-900 transition-colors">
+                Tutup
+            </button>
+        </div>
+    </div>
+
+    <!-- ================= MODAL GAGAL ================= -->
+    <div id="failModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden p-3 sm:p-4 overflow-y-auto">
+        <div class="modal-panel bg-white rounded-xl p-6 sm:p-8 max-w-sm w-full text-center shadow-2xl border-2 gold-border my-auto max-h-[92vh] overflow-y-auto">
+            <div class="w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-4">
+                <svg viewBox="0 0 60 60" class="w-full h-full">
+                    <circle class="fail-circle" cx="30" cy="30" r="26" fill="none" stroke="#dc2626" stroke-width="3"/>
+                    <line class="fail-line fail-line-1" x1="20" y1="20" x2="40" y2="40" stroke="#dc2626" stroke-width="3" stroke-linecap="round"/>
+                    <line class="fail-line fail-line-2" x1="40" y1="20" x2="20" y2="40" stroke="#dc2626" stroke-width="3" stroke-linecap="round"/>
+                </svg>
+            </div>
+            <h3 class="text-lg font-extrabold red-text mb-2 leading-snug">MOHON MAAF, ANDA BELUM BISA MENGIKUTI TST INI</h3>
+            <p id="failReason" class="text-gray-500 text-sm mb-6"></p>
+            <button id="closeFailBtn" class="w-full py-2.5 rounded-lg red-theme text-[#F3E5AB] font-bold hover:bg-red-900 transition-colors">
+                Tutup
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const form         = document.getElementById('bookingForm');
+        const kelasSelect  = document.getElementById('kelas');
+        const tstSelect    = document.getElementById('tst');
+        const submitBtn    = document.getElementById('submitBtn');
+        const loadNotice   = document.getElementById('loadNotice');
+
+        const successModal = document.getElementById('successModal');
+        const failModal     = document.getElementById('failModal');
+
+        // ============================================================
+        // GANTI URL INI dengan URL deployment Apps Script kamu sendiri
+        // (yang diakhiri /exec). Ambil dari Deploy > Manage deployments.
+        // ============================================================
+        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyzlQjxc3QoC3ZDczIgLEzx7V0ign7kmg0gJZv3--7MB4lwU8kvfDSkjunBFv0qy196Mg/exec';
+
+        // ---- JSONP helper: cara manggil Apps Script tanpa kena masalah CORS ----
+        function jsonpRequest(params, onSuccess, onError) {
+            const cbName = 'jsonp_cb_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
+            let selesai = false;
+
+            window[cbName] = function (data) {
+                selesai = true;
+                cleanup();
+                onSuccess(data);
+            };
+
+            const query = Object.keys(params)
+                .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); })
+                .join('&');
+
+            const script = document.createElement('script');
+            script.src = APPS_SCRIPT_URL + '?' + query + '&callback=' + cbName;
+            script.onerror = function () {
+                if (selesai) return;
+                cleanup();
+                onError(new Error('Gagal terhubung ke server'));
+            };
+
+            function cleanup() {
+                delete window[cbName];
+                if (script.parentNode) script.parentNode.removeChild(script);
+            }
+
+            document.body.appendChild(script);
+
+            setTimeout(function () {
+                if (!selesai) {
+                    cleanup();
+                    onError(new Error('Waktu tunggu server habis'));
+                }
+            }, 15000);
+        }
+
+        const REASON_TEXT = {
+            sudah_daftar_hari_ini: 'Nomor registrasi ini sudah terdaftar di salah satu sesi TST pada tanggal yang sama. Satu siswa hanya boleh mengikuti 1 TST per hari.',
+            kuota_penuh: 'Mohon maaf, kuota untuk sesi yang Anda pilih baru saja penuh. Silakan pilih sesi lain.',
+            jadwal_tidak_valid: 'Sesi yang Anda pilih tidak lagi tersedia. Silakan pilih ulang sesi TST.',
+            data_tidak_lengkap: 'Data yang Anda isi belum lengkap.',
+            server_sibuk: 'Server sedang sangat ramai. Silakan coba lagi dalam beberapa saat.'
+        };
+
+        function loadInitialData() {
+            jsonpRequest({ action: 'initial' }, populateForm, function () {
+                loadNotice.textContent = 'Gagal memuat data jadwal. Silakan muat ulang halaman.';
+                loadNotice.classList.add('text-red-600');
+            });
+        }
+
+        function populateForm(data) {
+            // --- Asal Kelas ---
+            kelasSelect.innerHTML = '';
+            if (data.kelasOptions && data.kelasOptions.length > 0) {
+                const placeholder = new Option('-- Pilih Asal Kelas --', '', true, true);
+                placeholder.disabled = true;
+                kelasSelect.add(placeholder);
+                data.kelasOptions.forEach(function (k) {
+                    kelasSelect.add(new Option(k, k));
+                });
+                kelasSelect.disabled = false;
+            } else {
+                kelasSelect.add(new Option('-- Data kelas belum tersedia --', ''));
+            }
+
+            // --- Pilihan TST ---
+            tstSelect.innerHTML = '';
+            if (data.tstOptions && data.tstOptions.length > 0) {
+                const placeholder = new Option('-- Silakan Pilih TST --', '', true, true);
+                placeholder.disabled = true;
+                tstSelect.add(placeholder);
+                data.tstOptions.forEach(function (opt) {
+                    tstSelect.add(new Option(opt.label, JSON.stringify({
+                        mapel: opt.mapel, tanggal: opt.tanggal, jam: opt.jam
+                    })));
+                });
+                tstSelect.disabled = false;
+            } else {
+                tstSelect.add(new Option('-- Semua sesi penuh / belum ada jadwal --', ''));
+            }
+
+            const bisaDaftar = (data.kelasOptions && data.kelasOptions.length > 0) &&
+                                (data.tstOptions && data.tstOptions.length > 0);
+            submitBtn.disabled = !bisaDaftar;
+
+            loadNotice.textContent = bisaDaftar ? '' : 'Mohon maaf, saat ini tidak ada jadwal TST yang tersedia.';
+        }
+
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            if (!tstSelect.value || !kelasSelect.value) return;
+
+            const tstData = JSON.parse(tstSelect.value);
+            const formData = {
+                nama: document.getElementById('nama').value.trim(),
+                noreg: String(document.getElementById('noreg').value).trim(), // eksplisit string, jangan sampai jadi number
+                kelas: kelasSelect.value,
+                mapel: tstData.mapel,
+                tanggal: tstData.tanggal,
+                jam: tstData.jam
+            };
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Memproses...';
+
+            // Kalau lagi war tiket ramai, request ini akan mengantre di server (LockService).
+            // Kasih tahu pengguna setelah beberapa detik supaya tidak dikira macet/gagal.
+            const antreanTimeout = setTimeout(function () {
+                submitBtn.textContent = 'Sedang mengantre, mohon tunggu...';
+            }, 3000);
+
+            jsonpRequest({
+                action: 'daftar',
+                nama: formData.nama,
+                noreg: formData.noreg,
+                kelas: formData.kelas,
+                mapel: formData.mapel,
+                tanggal: formData.tanggal,
+                jam: formData.jam
+            }, function (res) {
+                clearTimeout(antreanTimeout);
+                handleResult(res, formData);
+            }, function () {
+                clearTimeout(antreanTimeout);
+                handleResult({ success: false, message: 'MOHON MAAF, ANDA BELUM BISA MENGIKUTI TST INI', reason: 'server_sibuk' }, formData);
+            });
+        });
+
+        function handleResult(res, formData) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Amankan Tiket';
+
+            if (res.success) {
+                showSuccess(res.data);
+                form.reset();
+            } else {
+                showFail(res.reason);
+                // Refresh jadwal (jaga-jaga kuota berubah karena war tiket ramai)
+                loadInitialData();
+            }
+        }
+
+        function showSuccess(data) {
+            document.getElementById('resNoreg').textContent  = data.noreg;
+            document.getElementById('resNama').textContent   = data.nama;
+            document.getElementById('resKelas').textContent  = data.kelas;
+            document.getElementById('resMapel').textContent  = data.mapel;
+            document.getElementById('resJadwal').textContent = data.jam + ' • ' + data.tanggal;
+
+            // QR sekarang HANYA berisi token acak (tidak berisi data terbaca lagi).
+            // Data siswa baru terbuka lewat pencarian di spreadsheet saat di-scan
+            // via halaman scanner (di-host terpisah di Netlify).
+            document.getElementById('qrImage').src =
+                'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(data.token);
+
+            openModal(successModal, '#checkSvg');
+        }
+
+        function showFail(reason) {
+            document.getElementById('failReason').textContent = REASON_TEXT[reason] || 'Silakan coba lagi.';
+            openModal(failModal);
+        }
+
+        function openModal(modalEl, svgSelector) {
+            modalEl.classList.remove('hidden');
+            const panel = modalEl.querySelector('.modal-panel');
+            modalEl.classList.remove('anim-play');
+            void modalEl.offsetWidth; // reflow, supaya animasi bisa diulang tiap kali modal dibuka
+            setTimeout(function () {
+                panel.classList.add('show');
+                modalEl.classList.add('anim-play');
+            }, 10);
+        }
+
+        function closeModal(modalEl) {
+            const panel = modalEl.querySelector('.modal-panel');
+            panel.classList.remove('show');
+            setTimeout(function () { modalEl.classList.add('hidden'); }, 250);
+        }
+
+        document.getElementById('closeSuccessBtn').addEventListener('click', function () {
+            closeModal(successModal);
+        });
+        document.getElementById('closeFailBtn').addEventListener('click', function () {
+            closeModal(failModal);
+        });
+
+        loadInitialData();
+    </script>
+</body>
+</html>
