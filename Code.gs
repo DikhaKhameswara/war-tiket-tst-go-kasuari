@@ -3,32 +3,44 @@
  *  WAR TIKET TST GO KASUARI — Backend (Google Apps Script)
  * ============================================================
  *  Spreadsheet : Permintaan_TST_GO_Kasuari
- *  Sheet 1 Manifest_Jadwal    : No | Mapel | Tanggal | Jam | Kuota | Pengajar
- *  Sheet 2 List_Pendaftar_TST : No | Mapel | Tanggal | Jam | Nomor Registrasi | Nama Lengkap | Asal Kelas | Token | Status Kehadiran
- *  Sheet 3 List_Asal_Kelas    : No | Asal Kelas
+ *  Sheet 1 Manifest_Jadwal        : No | Mapel | Tanggal | Jam | Kuota | Pengajar | Id Tst
+ *                                   (Id Tst = kolom G, auto-generate oleh trigger onEdit di bawah)
+ *  Sheet 2 List_Pendaftar_TST     : No | Mapel | Tanggal | Jam | Nomor Registrasi | Nama Lengkap | Asal Kelas | Id Pendaftar Tst | Status Kehadiran
+ *  Sheet 3 List_Asal_Kelas        : No | Asal Kelas
+ *  Sheet 4 List_Token_Pendaftar_TST : No | Id Tst | Id Pendaftar Tst | Token | Status Kehadiran
  *
- *  PENTING - SETUP MANUAL SEKALI SAJA di sheet List_Pendaftar_TST:
- *  - Sel H1: header "Token" (kolom ke-8) — diisi otomatis oleh script (kode
- *    acak unik per pendaftar, dipakai sbg isi QR code), tidak perlu diisi manual.
- *  - Sel I1: header "Status Kehadiran" (kolom ke-9) — otomatis "Tidak Hadir"
- *    saat daftar, berubah jadi "Hadir" saat berhasil di-scan.
+ *  KENAPA TOKEN DIPINDAH KE SHEET SENDIRI (List_Token_Pendaftar_TST):
+ *  Supaya List_Pendaftar_TST (yang boleh dilihat semua editor) tidak lagi
+ *  memuat Token (kode rahasia QR). Token cuma ada di sheet terpisah ini,
+ *  yang aksesnya bisa dibatasi lebih ketat (lihat diskusi proteksi sheet
+ *  sebelumnya). "Id Pendaftar Tst" di List_Pendaftar_TST cuma kunci
+ *  penghubung (join key) — aman dilihat siapa pun, tidak bisa dipakai
+ *  utk absen palsu tanpa Token aslinya.
  *
- *  ARSITEKTUR SEKARANG — Apps Script ini BACKEND API MURNI, tidak menyajikan
- *  HTML sama sekali. Frontend (form pendaftaran & scanner) di-host terpisah
- *  di Netlify (repo GitHub), dan memanggil endpoint di bawah lewat JSONP
- *  (BUKAN fetch() biasa, karena Apps Script tidak mengirim header CORS yang
- *  dibutuhkan fetch()/XHR lintas domain):
+ *  PENTING - SETUP MANUAL SEKALI SAJA:
+ *  - Manifest_Jadwal sel G1: header "Id Tst" (kalau belum ada).
+ *  - List_Pendaftar_TST sel H1: ganti jadi "Id Pendaftar Tst" (bukan "Token" lagi).
+ *  - List_Pendaftar_TST sel I1: header "Status Kehadiran" (kalau belum ada).
+ *  - Buat sheet BARU "List_Token_Pendaftar_TST" dengan header persis:
+ *    No | Id Tst | Id Pendaftar Tst | Token | Status Kehadiran
+ *
+ *  ARSITEKTUR — Apps Script ini BACKEND API MURNI, tidak menyajikan HTML.
+ *  Frontend (form pendaftaran & scanner) di-host terpisah di Netlify (repo
+ *  GitHub), memanggil endpoint di bawah lewat JSONP (BUKAN fetch() biasa,
+ *  krn Apps Script tidak mengirim header CORS yg dibutuhkan fetch()/XHR
+ *  lintas domain):
  *
  *    .../exec?action=initial&callback=NAMA_FUNGSI
  *      -> dipanggil form saat halaman dimuat. Balikan: { tstOptions, kelasOptions }
+ *      -> tstOptions HANYA berisi sesi HARI INI yang kuotanya masih ada.
  *
  *    .../exec?action=daftar&nama=...&noreg=...&kelas=...&mapel=...&tanggal=...&jam=...&callback=NAMA_FUNGSI
  *      -> dipanggil form saat submit. Balikan: { success, data } atau { success:false, reason }
  *
  *    .../exec?action=sesi&callback=NAMA_FUNGSI
- *      -> dipanggil scanner saat halaman dimuat. Balikan: daftar sesi utk dropdown
+ *      -> dipanggil scanner saat halaman dimuat. Balikan: daftar SEMUA sesi (semua tanggal) utk dropdown
  *
- *    .../exec?action=scan&token=...&mapel=...&tanggal=...&jam=...&callback=NAMA_FUNGSI
+ *    .../exec?action=scan&token=...&idTst=...&callback=NAMA_FUNGSI
  *      -> dipanggil scanner tiap berhasil scan 1 QR. Balikan: { success, data/reason }
  * ============================================================
  *  CATATAN DEBUG:
@@ -43,6 +55,7 @@ const SPREADSHEET_ID  = '17wXmC9HihtpZJuKS_6zcXoS392-NStNmmZfwVLyvHlU';
 const SHEET_MANIFEST   = 'Manifest_Jadwal';
 const SHEET_PENDAFTAR  = 'List_Pendaftar_TST';
 const SHEET_KELAS      = 'List_Asal_Kelas';
+const SHEET_TOKEN      = 'List_Token_Pendaftar_TST';
 const TIMEZONE         = Session.getScriptTimeZone();
 
 /** Entry point Web App. */
@@ -75,12 +88,8 @@ function doGet(e) {
   }
 
   if (action === 'scan') {
-    Logger.log('[DEBUG] doGet - action=scan dipanggil (dari scanner Netlify), token=' + e.parameter.token);
-    const hasil = scanKehadiran(e.parameter.token, {
-      mapel: e.parameter.mapel,
-      tanggal: e.parameter.tanggal,
-      jam: e.parameter.jam
-    });
+    Logger.log('[DEBUG] doGet - action=scan dipanggil, token=' + e.parameter.token + ', idTst=' + e.parameter.idTst);
+    const hasil = scanKehadiran(e.parameter.token, e.parameter.idTst);
     return jsonpResponse_(hasil, callback);
   }
 
@@ -91,8 +100,6 @@ function doGet(e) {
 }
 
 // Bungkus data sbg respons JSONP (kalau ada param callback) atau JSON biasa.
-// JSONP dipakai supaya scanner di domain lain (Netlify) bisa ambil data ini
-// TANPA kena masalah CORS Apps Script (lihat catatan di atas doGet).
 function jsonpResponse_(data, callback) {
   const json = JSON.stringify(data);
   if (callback) {
@@ -110,7 +117,6 @@ function isDate_(v) {
   return Object.prototype.toString.call(v) === '[object Date]';
 }
 
-// Tipe sebuah nilai, buat keperluan debug (Date / String / Number / dll)
 function tipeDebug_(v) {
   return Object.prototype.toString.call(v) + ' -> ' + v;
 }
@@ -149,14 +155,15 @@ function getInitialData() {
   };
 }
 
+// Sesi yang tertampil di form pendaftaran: HANYA yang (1) kuotanya masih ada
+// DAN (2) tanggalnya = HARI INI (tanggal server saat fungsi ini dipanggil).
 function getAvailableTST_() {
   const manifestRows  = readSheet_(SHEET_MANIFEST).rows;
   const pendaftarRows = readSheet_(SHEET_PENDAFTAR).rows;
 
-  Logger.log('[DEBUG] getAvailableTST_ - jumlah baris Manifest_Jadwal: ' + manifestRows.length);
-  Logger.log('[DEBUG] getAvailableTST_ - jumlah baris List_Pendaftar_TST: ' + pendaftarRows.length);
+  const hariIniKey = keyDate_(new Date());
+  Logger.log('[DEBUG] getAvailableTST_ - hariIniKey (tanggal server): ' + hariIniKey);
 
-  // Hitung jumlah pendaftar per kombinasi Mapel+Tanggal+Jam
   const countMap = {};
   pendaftarRows.forEach(function (r) {
     const mapel = r[1];
@@ -165,33 +172,22 @@ function getAvailableTST_() {
     countMap[key] = (countMap[key] || 0) + 1;
   });
 
-  // Kalau semua sesi ada di 1 tanggal yang sama (event 1 hari),
-  // dropdown cukup tampilkan Mapel + Jam saja (sesuai aturan).
-  // Kalau ada beberapa tanggal berbeda, tanggal ikut ditampilkan
-  // supaya siswa tidak salah pilih sesi.
-  const tanggalSet = new Set(
-    manifestRows.filter(function (r) { return r[1]; }).map(function (r) { return keyDate_(r[2]); })
-  );
-  const singleDateEvent = tanggalSet.size <= 1;
-
   const options = [];
-  manifestRows.forEach(function (r, idx) {
+  manifestRows.forEach(function (r) {
     const mapel = r[1], tanggal = r[2], jam = r[3], kuota = r[4];
     if (!mapel) return;
 
-    const tglKey     = keyDate_(tanggal);
+    const tglKey = keyDate_(tanggal);
+    if (tglKey !== hariIniKey) return; // BUKAN hari ini -> jangan tampilkan
+
     const jamDisplay = displayTime_(jam);
-    const key         = mapel + '|' + tglKey + '|' + jamDisplay;
-    const terisi      = countMap[key] || 0;
-    const sisa        = Number(kuota) - terisi;
+    const key = mapel + '|' + tglKey + '|' + jamDisplay;
+    const terisi = countMap[key] || 0;
+    const sisa = Number(kuota) - terisi;
 
     if (sisa > 0) {
-      const label = singleDateEvent
-        ? (mapel + ' — ' + jamDisplay)
-        : (mapel + ' — ' + jamDisplay + ' (' + displayDate_(tanggal) + ')');
-
       options.push({
-        label: label,
+        label: mapel + ' — ' + jamDisplay,
         mapel: mapel,
         tanggal: tglKey,
         tanggalDisplay: displayDate_(tanggal),
@@ -201,17 +197,16 @@ function getAvailableTST_() {
     }
   });
 
-  Logger.log('[DEBUG] getAvailableTST_ - options yang dikirim ke dropdown: ' + JSON.stringify(options));
+  Logger.log('[DEBUG] getAvailableTST_ - options (hari ini & kuota tersedia): ' + JSON.stringify(options));
   return options;
 }
 
 function getDaftarKelas_() {
   const rows = readSheet_(SHEET_KELAS).rows;
-  const hasil = rows
+  return rows
     .map(function (r) { return r[1]; })
     .filter(function (v) { return v !== '' && v !== null && v !== undefined; })
     .map(function (v) { return String(v).trim(); });
-  return hasil;
 }
 
 /* ---------------------------------------------------------- *
@@ -226,10 +221,6 @@ function submitPendaftaran(formData) {
   let acquired = false;
 
   try {
-    // Model ANTREAN: tiap submit menunggu giliran mendapatkan lock (bukan langsung
-    // dicek/ditolak dari data yang lama). Begitu dapat giliran, kuota & duplikasi
-    // dicek ulang dari data ter-update saat itu juga — jadi validasi murni terjadi
-    // saat submit, satu per satu, aman dari race condition.
     acquired = lock.tryLock(4 * 60 * 1000);
     if (!acquired) {
       Logger.log('[DEBUG] submitPendaftaran - GAGAL dapat lock (antrean kepenuhan)');
@@ -251,15 +242,19 @@ function submitPendaftaran(formData) {
       return { success: false, message: 'MOHON MAAF, ANDA BELUM BISA MENGIKUTI TST INI', reason: 'data_tidak_lengkap' };
     }
 
-    const manifestRows  = readSheet_(SHEET_MANIFEST).rows;
-    const pendaftarInfo = readSheet_(SHEET_PENDAFTAR);
+    const manifestInfo   = readSheet_(SHEET_MANIFEST);
+    const manifestSheet  = manifestInfo.sheet;
+    const manifestRows   = manifestInfo.rows;
+    const pendaftarInfo  = readSheet_(SHEET_PENDAFTAR);
     const pendaftarSheet = pendaftarInfo.sheet;
     const pendaftarRows  = pendaftarInfo.rows;
 
-    // 1) Pastikan jadwal (mapel+tanggal+jam) valid & ambil kuotanya
+    // 1) Pastikan jadwal (mapel+tanggal+jam) valid, ambil kuota & Id Tst-nya
     let kuota = null;
     let tanggalDisplay = tglKey;
-    let tanggalValue = tglKey; // nilai ASLI dari Manifest_Jadwal (Date object), dipakai saat menulis baris baru
+    let tanggalValue = tglKey;
+    let idTst = '';
+    let manifestRowIdx = -1;
     for (let i = 0; i < manifestRows.length; i++) {
       const r = manifestRows[i];
       if (!r[1]) continue;
@@ -272,7 +267,9 @@ function submitPendaftaran(formData) {
         kuota = Number(r[4]);
         tanggalDisplay = displayDate_(r[2]);
         tanggalValue = r[2];
-        Logger.log('[DEBUG] submitPendaftaran - MATCH ditemukan di baris #' + (i + 2) + ' | kuota=' + kuota);
+        idTst = String(r[6] || '').trim(); // kolom G: Id Tst
+        manifestRowIdx = i;
+        Logger.log('[DEBUG] submitPendaftaran - MATCH ditemukan di baris #' + (i + 2) + ' | kuota=' + kuota + ' | idTst="' + idTst + '"');
         break;
       }
     }
@@ -281,8 +278,17 @@ function submitPendaftaran(formData) {
       return { success: false, message: 'MOHON MAAF, ANDA BELUM BISA MENGIKUTI TST INI', reason: 'jadwal_tidak_valid' };
     }
 
+    // Jaring pengaman: kalau Id Tst di Manifest_Jadwal ternyata masih kosong
+    // (mis. trigger onEdit belum sempat jalan utk baris ini), generate sendiri
+    // di sini dgn pola yang sama, lalu tulis balik ke Manifest_Jadwal kolom G
+    // supaya sesi ini konsisten utk pendaftar berikutnya juga.
+    if (!idTst) {
+      idTst = (mapel + '-' + tanggalDisplay + '-' + jam + '-' + Utilities.getUuid().split('-')[0].toUpperCase()).replace(/\s+/g, '');
+      manifestSheet.getRange(manifestRowIdx + 2, 7).setValue(idTst);
+      Logger.log('[DEBUG] submitPendaftaran - Id Tst kosong, generate fallback & tulis balik ke Manifest_Jadwal: ' + idTst);
+    }
+
     // 2) Cek: nomor registrasi ini sudah daftar TST lain di tanggal yang sama?
-    //    (Aturan: 1 siswa hanya boleh ikut 1 TST per hari)
     const sudahDaftarHariIni = pendaftarRows.some(function (r) {
       return String(r[4]).trim() === noreg && keyDate_(r[2]) === tglKey;
     });
@@ -292,7 +298,6 @@ function submitPendaftaran(formData) {
     }
 
     // 3) Cek kuota utk sesi (mapel+tanggal+jam) ini — dicek ULANG di dalam lock
-    //    supaya aman dari race condition (bukan cuma mengandalkan data saat page load).
     const terisi = pendaftarRows.filter(function (r) {
       return r[1] === mapel && keyDate_(r[2]) === tglKey && displayTime_(r[3]) === jam;
     }).length;
@@ -301,20 +306,24 @@ function submitPendaftaran(formData) {
       return { success: false, message: 'MOHON MAAF, ANDA BELUM BISA MENGIKUTI TST INI', reason: 'kuota_penuh' };
     }
 
-    // 4) Lolos semua validasi -> simpan pendaftaran
-    // Nomor Registrasi & Jam diberi awalan apostrof (') supaya Sheets memperlakukannya
-    // sebagai TEKS MURNI, tanpa perlu setNumberFormat() (lihat catatan versi sebelumnya
-    // soal kenapa setNumberFormat dihindari). Tanggal tetap objek Date asli.
-    //
-    // Token: kode acak unik (UUID) yang jadi ISI QR CODE siswa. QR TIDAK lagi berisi
-    // data terbaca (nama/kelas/dst) — cuma kode ini. Data asli baru terbuka lewat
-    // pencarian di spreadsheet saat di-scan oleh scanner.html (lihat scanKehadiran).
+    // 4) Lolos semua validasi -> simpan pendaftaran di 2 sheet:
+    //    - List_Pendaftar_TST   : data siswa + Id Pendaftar Tst (join key, AMAN dilihat siapa saja)
+    //    - List_Token_Pendaftar_TST : Id Tst + Id Pendaftar Tst + Token RAHASIA (isi QR) + Status Kehadiran
+    const idPendaftar = Utilities.getUuid();
     const token = Utilities.getUuid();
 
-    const newNo = pendaftarRows.filter(function (r) { return r[1]; }).length + 1;
-    const barisBaru = [newNo, mapel, tanggalValue, "'" + jam, "'" + noreg, nama, kelas, token, 'Tidak Hadir'];
-    Logger.log('[DEBUG] submitPendaftaran - BERHASIL, menulis baris baru: ' + JSON.stringify(barisBaru));
-    pendaftarSheet.appendRow(barisBaru);
+    const newNoPendaftar = pendaftarRows.filter(function (r) { return r[1]; }).length + 1;
+    const barisPendaftar = [newNoPendaftar, mapel, tanggalValue, "'" + jam, "'" + noreg, nama, kelas, idPendaftar, 'Tidak Hadir'];
+    Logger.log('[DEBUG] submitPendaftaran - tulis List_Pendaftar_TST: ' + JSON.stringify(barisPendaftar));
+    pendaftarSheet.appendRow(barisPendaftar);
+
+    const tokenInfo  = readSheet_(SHEET_TOKEN);
+    const tokenSheet = tokenInfo.sheet;
+    const tokenRows  = tokenInfo.rows;
+    const newNoToken = tokenRows.filter(function (r) { return r[1]; }).length + 1;
+    const barisToken = [newNoToken, idTst, idPendaftar, token, 'Tidak Hadir'];
+    Logger.log('[DEBUG] submitPendaftaran - tulis List_Token_Pendaftar_TST: ' + JSON.stringify(barisToken));
+    tokenSheet.appendRow(barisToken);
 
     return {
       success: true,
@@ -338,11 +347,12 @@ function submitPendaftaran(formData) {
 }
 
 /* ---------------------------------------------------------- *
- *  DIPANGGIL DARI HALAMAN SCANNER (scanner.html)
+ *  DIPANGGIL DARI HALAMAN SCANNER (scanner.html, di Netlify)
  * ---------------------------------------------------------- */
 
-// Daftar SEMUA sesi di Manifest_Jadwal (tanpa filter kuota) — utk dropdown pemilihan
-// sesi yang sedang berlangsung di halaman scanner.
+// Daftar SEMUA sesi di Manifest_Jadwal (tanpa filter kuota/tanggal) — utk dropdown
+// pemilihan sesi yang sedang berlangsung di halaman scanner. Tiap sesi bawa idTst,
+// yang nanti dikirim balik saat scan utk dicocokkan.
 function getSesiUntukScan() {
   const manifestRows = readSheet_(SHEET_MANIFEST).rows;
 
@@ -353,7 +363,7 @@ function getSesiUntukScan() {
 
   const sesi = [];
   manifestRows.forEach(function (r) {
-    const mapel = r[1], tanggal = r[2], jam = r[3], pengajar = r[5];
+    const mapel = r[1], tanggal = r[2], jam = r[3], pengajar = r[5], idTst = r[6];
     if (!mapel) return;
 
     const jamDisplay = displayTime_(jam);
@@ -367,6 +377,7 @@ function getSesiUntukScan() {
       tanggal: keyDate_(tanggal),
       tanggalDisplay: displayDate_(tanggal),
       jam: jamDisplay,
+      idTst: String(idTst || '').trim(),
       pengajar: pengajar ? String(pengajar).trim() : ''
     });
   });
@@ -376,9 +387,10 @@ function getSesiUntukScan() {
 }
 
 // Dipanggil setiap kali scanner berhasil membaca 1 QR.
-// token: string dari isi QR. sesi: { mapel, tanggal, jam } sesi yg sedang dipilih pengawas.
-function scanKehadiran(token, sesi) {
-  Logger.log('[DEBUG] scanKehadiran - token diterima: "' + token + '" | sesi: ' + JSON.stringify(sesi));
+// token: string dari isi QR (dicari di List_Token_Pendaftar_TST).
+// idTstDipilih: Id Tst dari sesi yang sedang dipilih pengawas di scanner.
+function scanKehadiran(token, idTstDipilih) {
+  Logger.log('[DEBUG] scanKehadiran - token diterima: "' + token + '" | idTstDipilih: "' + idTstDipilih + '"');
 
   const lock = LockService.getScriptLock();
   let acquired = false;
@@ -390,36 +402,55 @@ function scanKehadiran(token, sesi) {
     }
 
     const tokenBersih = String(token || '').trim();
+    const idTstBersih = String(idTstDipilih || '').trim();
+
     if (!tokenBersih) {
       return { success: false, message: 'QR TIDAK TERBACA', reason: 'token_kosong' };
     }
-
-    const sesiMapel   = String((sesi && sesi.mapel) || '').trim();
-    const sesiTanggal = String((sesi && sesi.tanggal) || '').trim();
-    const sesiJam     = String((sesi && sesi.jam) || '').trim();
-
-    if (!sesiMapel || !sesiTanggal || !sesiJam) {
+    if (!idTstBersih) {
       return { success: false, message: 'SESI BELUM DIPILIH', reason: 'sesi_belum_dipilih' };
     }
 
+    // 1) Cari token ini di List_Token_Pendaftar_TST
+    const tokenInfo  = readSheet_(SHEET_TOKEN);
+    const tokenSheet = tokenInfo.sheet;
+    const tokenRows  = tokenInfo.rows;
+
+    let tokenRow = null, tokenRowIdx = -1;
+    for (let i = 0; i < tokenRows.length; i++) {
+      if (String(tokenRows[i][3] || '').trim() === tokenBersih) { // kolom D: Token
+        tokenRow = tokenRows[i];
+        tokenRowIdx = i;
+        break;
+      }
+    }
+
+    if (!tokenRow) {
+      Logger.log('[DEBUG] scanKehadiran - token tidak ditemukan di List_Token_Pendaftar_TST');
+      return { success: false, message: 'QR TIDAK VALID / TIDAK DIKENALI', reason: 'token_tidak_valid' };
+    }
+
+    const rowIdTst       = String(tokenRow[1] || '').trim(); // kolom B: Id Tst
+    const rowIdPendaftar = String(tokenRow[2] || '').trim(); // kolom C: Id Pendaftar Tst
+    const rowStatus      = String(tokenRow[4] || '').trim(); // kolom E: Status Kehadiran
+
+    // 2) Ambil data siswa dari List_Pendaftar_TST via Id Pendaftar Tst (join key)
     const pendaftarInfo  = readSheet_(SHEET_PENDAFTAR);
     const pendaftarSheet = pendaftarInfo.sheet;
     const pendaftarRows  = pendaftarInfo.rows;
 
-    // Cari pendaftar dengan token ini (kolom H / index ke-7 setelah header dibuang)
-    let pendaftar = null;
-    let rowIndex = -1; // index di array (0-based, sebelum header dibuang)
+    let pendaftar = null, pendaftarRowIdx = -1;
     for (let i = 0; i < pendaftarRows.length; i++) {
-      if (String(pendaftarRows[i][7] || '').trim() === tokenBersih) {
+      if (String(pendaftarRows[i][7] || '').trim() === rowIdPendaftar) { // kolom H: Id Pendaftar Tst
         pendaftar = pendaftarRows[i];
-        rowIndex = i;
+        pendaftarRowIdx = i;
         break;
       }
     }
 
     if (!pendaftar) {
-      Logger.log('[DEBUG] scanKehadiran - token tidak ditemukan di List_Pendaftar_TST');
-      return { success: false, message: 'QR TIDAK VALID / TIDAK DIKENALI', reason: 'token_tidak_valid' };
+      Logger.log('[DEBUG] scanKehadiran - GAGAL: Id Pendaftar Tst "' + rowIdPendaftar + '" tidak ditemukan di List_Pendaftar_TST (data tidak konsisten)');
+      return { success: false, message: 'DATA PENDAFTAR TIDAK DITEMUKAN', reason: 'data_tidak_konsisten' };
     }
 
     const pMapel   = pendaftar[1];
@@ -428,18 +459,12 @@ function scanKehadiran(token, sesi) {
     const pNoreg   = String(pendaftar[4]).trim();
     const pNama    = pendaftar[5];
     const pKelas   = pendaftar[6];
-    const pStatus  = String(pendaftar[8] || '').trim(); // kolom I: Status Kehadiran
 
-    const cocokMapel   = pMapel === sesiMapel;
-    const cocokTanggal = keyDate_(pTanggal) === sesiTanggal;
-    const cocokJam     = pJam === sesiJam;
+    Logger.log('[DEBUG] scanKehadiran - rowIdTst="' + rowIdTst + '" vs idTstDipilih="' + idTstBersih
+      + '" | rowStatus="' + rowStatus + '" | siswa=' + pNama);
 
-    Logger.log('[DEBUG] scanKehadiran - data pendaftar: mapel=' + pMapel + ', tanggal=' + keyDate_(pTanggal)
-      + ', jam=' + pJam + ', status=' + pStatus + ' | sesi dipilih: mapel=' + sesiMapel
-      + ', tanggal=' + sesiTanggal + ', jam=' + sesiJam
-      + ' | cocokMapel=' + cocokMapel + ', cocokTanggal=' + cocokTanggal + ', cocokJam=' + cocokJam);
-
-    if (!cocokMapel || !cocokTanggal || !cocokJam) {
+    // 3) Cocokkan Id Tst -> kalau beda, siswa ini bukan dari sesi yang sedang di-scan
+    if (rowIdTst !== idTstBersih) {
       return {
         success: false,
         reason: 'sesi_tidak_cocok',
@@ -455,8 +480,8 @@ function scanKehadiran(token, sesi) {
       };
     }
 
-    // Anti double-scan: cek status yang SUDAH ADA di baris pendaftar ini
-    if (pStatus === 'Hadir') {
+    // 4) Anti double-scan: cek status yang SUDAH ADA di List_Token_Pendaftar_TST
+    if (rowStatus === 'Hadir') {
       Logger.log('[DEBUG] scanKehadiran - GAGAL: status sudah Hadir sebelumnya');
       return {
         success: false,
@@ -466,11 +491,15 @@ function scanKehadiran(token, sesi) {
       };
     }
 
-    // Lolos semua validasi -> update kolom Status Kehadiran (I) di BARIS YANG SAMA
-    // jadi 'Hadir'. Tidak menambah baris/sheet baru sama sekali.
-    const barisSheet = rowIndex + 2; // +1 krn header dibuang saat slice, +1 lagi krn sheet mulai baris 1
-    pendaftarSheet.getRange(barisSheet, 9).setValue('Hadir');
-    Logger.log('[DEBUG] scanKehadiran - BERHASIL, status baris ' + barisSheet + ' (noreg ' + pNoreg + ') diubah jadi Hadir');
+    // 5) Lolos semua validasi -> update Status Kehadiran di KEDUA sheet
+    //    (List_Token_Pendaftar_TST = sumber utama, List_Pendaftar_TST = ikutan sinkron)
+    const barisToken = tokenRowIdx + 2;
+    tokenSheet.getRange(barisToken, 5).setValue('Hadir'); // kolom E: Status Kehadiran
+
+    const barisPendaftar = pendaftarRowIdx + 2;
+    pendaftarSheet.getRange(barisPendaftar, 9).setValue('Hadir'); // kolom I: Status Kehadiran
+
+    Logger.log('[DEBUG] scanKehadiran - BERHASIL, Status Kehadiran diubah jadi Hadir di baris token ' + barisToken + ' & baris pendaftar ' + barisPendaftar);
 
     return {
       success: true,
@@ -490,5 +519,54 @@ function scanKehadiran(token, sesi) {
     return { success: false, message: 'Terjadi kesalahan sistem.', reason: 'error_sistem: ' + err.message };
   } finally {
     if (acquired) lock.releaseLock();
+  }
+}
+
+// ============================================================
+// FUNGSI OTOMATIS: PEMBUAT UNIQUE ID DI MANIFEST_JADWAL
+// (sudah ada sebelumnya, dipertahankan apa adanya)
+// ============================================================
+function onEdit(e) {
+  if (!e || !e.range) return;
+
+  var sheet = e.source.getActiveSheet();
+
+  // Script HANYA berjalan di sheet "Manifest_Jadwal"
+  if (sheet.getName() !== "Manifest_Jadwal") return;
+
+  var range = e.range;
+  var row = range.getRow();
+  var col = range.getColumn();
+
+  // Asumsi Kolom G (Kolom ke-7) adalah tempat Id Tst
+  var targetCol = 7;
+
+  // Mengecek jika yang diedit adalah baris 2 ke atas, dan di kolom B (2) sampai F (6)
+  if (row > 1 && col >= 2 && col <= 6) {
+    var cellID = sheet.getRange(row, targetCol);
+    var currentValue = cellID.getValue();
+
+    // Hanya buat ID jika kolom Id Tst masih kosong
+    if (currentValue === "") {
+
+      var mapel = sheet.getRange(row, 2).getDisplayValue();
+      var tanggal = sheet.getRange(row, 3).getDisplayValue();
+      var jam = sheet.getRange(row, 4).getDisplayValue();
+
+      // Syarat ID terbuat: Mapel, Tanggal, dan Jam harus sudah diisi
+      if (mapel !== "" && tanggal !== "" && jam !== "") {
+
+        var randomHash = Utilities.getUuid().split('-')[0].toUpperCase();
+
+        // Membuat Unique ID
+        var uniqueID = mapel + "-" + tanggal + "-" + jam + "-" + randomHash;
+
+        // Membersihkan spasi pada ID agar rapi
+        uniqueID = uniqueID.replace(/\s+/g, "");
+
+        // Cetak ID ke kolom Id Tst
+        cellID.setValue(uniqueID);
+      }
+    }
   }
 }
