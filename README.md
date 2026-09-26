@@ -69,7 +69,7 @@ Diisi manual oleh admin — daftar sesi TST yang dibuka.
 | A | No | Angka | Nomor urut |
 | B | Mapel | Teks | Matematika / Fisika / Kimia / Biologi / TPS |
 | C | Tanggal | Date (DD/MM/YYYY) | Tanggal sesi |
-| D | Jam | Teks | Contoh: `09:00` atau `09:00 - 10:00` |
+| D | Jam | Teks | Contoh: `09:00 - 10:00` |
 | E | Kuota | Angka | Maksimal peserta sesi ini |
 | F | Pengajar | Teks | Nama pengajar/pengawas sesi |
 | G | **Id Tst** | Teks | **Auto-generate** oleh trigger `onEdit` — format `Mapel-Tanggal-Jam-HASHACAK` |
