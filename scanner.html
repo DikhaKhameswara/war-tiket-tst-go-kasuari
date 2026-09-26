@@ -117,7 +117,7 @@
         // GANTI URL INI dengan URL deployment Apps Script kamu sendiri
         // (yang diakhiri /exec). Ambil dari Deploy > Manage deployments.
         // ============================================================
-        const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyzlQjxc3QoC3ZDczIgLEzx7V0ign7kmg0gJZv3--7MB4lwU8kvfDSkjunBFv0qy196Mg/exec';
+        const APPS_SCRIPT_URL = 'PASTE_URL_APPS_SCRIPT_ANDA_DISINI/exec';
 
         // ---- JSONP helper: cara manggil Apps Script tanpa kena masalah CORS ----
         function jsonpRequest(params, onSuccess, onError) {
@@ -273,9 +273,7 @@
             jsonpRequest({
                 action: 'scan',
                 token: decodedText,
-                mapel: sesiTerpilih.mapel,
-                tanggal: sesiTerpilih.tanggal,
-                jam: sesiTerpilih.jam
+                idTst: sesiTerpilih.idTst
             }, handleScanResult, function () {
                 handleScanResult({ success: false, message: 'GAGAL TERHUBUNG KE SERVER', reason: 'error_koneksi' });
             });
