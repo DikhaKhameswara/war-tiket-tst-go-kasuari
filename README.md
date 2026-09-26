@@ -1,6 +1,8 @@
 # War Tiket TST GO Kasuari
 
-Sistem pendaftaran & absensi kehadiran untuk **TST (Tes Simulasi/Try Out)** GO Kasuari — siswa mendaftar lewat form web, mendapat tiket berupa QR code, dan kehadirannya dicatat lewat scan QR oleh pengawas.
+Sistem pendaftaran untuk **TST WAR UTBK** GO Kasuari — siswa mendaftar lewat form web, mendapat tiket berupa QR code, dan kehadirannya dicatat lewat scan QR oleh pengawas.
+Link Form Siswa : https://war-tiket-tst-go-kasuari.netlify.app/
+Link Scanner Pengajar : https://war-tiket-tst-go-kasuari.netlify.app/scanner/
 
 ## Daftar Isi
 
