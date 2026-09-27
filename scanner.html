@@ -203,6 +203,7 @@
 
         let daftarSesi = [];
         let sesiTerpilih = null;
+        let sesiTokenAktif = null; // kode bukti sudah lolos verifikasi pengajar, wajib disertakan tiap scan
         let html5QrCode = null;
         let sedangProses = false;
         let roster = []; // [{noreg, nama, kelas, status}]
@@ -269,6 +270,7 @@
 
                 // BERHASIL -> lanjut ke panel scan + tampilkan roster
                 sesiTerpilih = sesi;
+                sesiTokenAktif = res.data.sesiToken;
                 roster = res.data.roster || [];
 
                 sesiAktifLabel.textContent = sesi.label + ' — ' + res.data.pengajar;
@@ -298,6 +300,7 @@
                 resultCard.classList.remove('show');
                 verifikasiError.classList.add('hidden');
                 namaPengajarInput.value = '';
+                sesiTokenAktif = null;
                 updateVerifikasiBtnState();
             });
         });
@@ -376,7 +379,8 @@
             jsonpRequest({
                 action: 'scan',
                 token: decodedText,
-                idTst: sesiTerpilih.idTst
+                idTst: sesiTerpilih.idTst,
+                sesiToken: sesiTokenAktif
             }, handleScanResult, function () {
                 handleScanResult({ success: false, message: 'GAGAL TERHUBUNG KE SERVER', reason: 'error_koneksi' });
             });
@@ -425,6 +429,8 @@
                         '<div>Sudah tercatat hadir sebelumnya utk sesi ini.</div>';
                 } else if (res.reason === 'token_tidak_valid') {
                     resultDetail.innerHTML = '<div>QR ini tidak terdaftar di sistem.</div>';
+                } else if (res.reason === 'sesi_tidak_terverifikasi') {
+                    resultDetail.innerHTML = '<div>Sesi verifikasi kedaluwarsa. Klik "Ganti Sesi" lalu verifikasi ulang.</div>';
                 } else {
                     resultDetail.innerHTML = '<div>Silakan coba scan ulang.</div>';
                 }

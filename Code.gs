@@ -89,7 +89,13 @@ function doGet(e) {
 
   if (action === 'scan') {
     Logger.log('[DEBUG] doGet - action=scan dipanggil, token=' + e.parameter.token + ', idTst=' + e.parameter.idTst);
-    const hasil = scanKehadiran(e.parameter.token, e.parameter.idTst);
+    const hasil = scanKehadiran(e.parameter.token, e.parameter.idTst, e.parameter.sesiToken);
+    return jsonpResponse_(hasil, callback);
+  }
+
+  if (action === 'verifikasi') {
+    Logger.log('[DEBUG] doGet - action=verifikasi dipanggil, idTst=' + e.parameter.idTst);
+    const hasil = verifikasiPengajar(e.parameter.idTst, e.parameter.namaPengajar);
     return jsonpResponse_(hasil, callback);
   }
 
@@ -355,21 +361,18 @@ function submitPendaftaran(formData) {
 // yang nanti dikirim balik saat scan utk dicocokkan.
 function getSesiUntukScan() {
   const manifestRows = readSheet_(SHEET_MANIFEST).rows;
-
-  const tanggalSet = new Set(
-    manifestRows.filter(function (r) { return r[1]; }).map(function (r) { return keyDate_(r[2]); })
-  );
-  const singleDateEvent = tanggalSet.size <= 1;
+  const hariIniKey = keyDate_(new Date());
 
   const sesi = [];
   manifestRows.forEach(function (r) {
     const mapel = r[1], tanggal = r[2], jam = r[3], pengajar = r[5], idTst = r[6];
     if (!mapel) return;
 
+    const tglKey = keyDate_(tanggal);
+    if (tglKey !== hariIniKey) return; // BUKAN hari ini -> jangan tampilkan di scanner
+
     const jamDisplay = displayTime_(jam);
-    const label = singleDateEvent
-      ? (mapel + ' — ' + jamDisplay)
-      : (mapel + ' — ' + jamDisplay + ' (' + displayDate_(tanggal) + ')');
+    const label = mapel + ' — ' + jamDisplay; // semua yg tampil sudah pasti hari ini, tanggal tak perlu ditulis lagi
 
     sesi.push({
       label: label,
@@ -377,8 +380,10 @@ function getSesiUntukScan() {
       tanggal: keyDate_(tanggal),
       tanggalDisplay: displayDate_(tanggal),
       jam: jamDisplay,
-      idTst: String(idTst || '').trim(),
-      pengajar: pengajar ? String(pengajar).trim() : ''
+      idTst: String(idTst || '').trim()
+      // CATATAN: nama Pengajar SENGAJA tidak disertakan di sini. Nama pengajar
+      // hanya dicek di server lewat verifikasiPengajar(), supaya tidak bisa
+      // diintip lewat inspect element / network tab sebelum berhasil verifikasi.
     });
   });
 
@@ -386,11 +391,104 @@ function getSesiUntukScan() {
   return sesi;
 }
 
+// Cek apakah nama yang diketik pengawas cocok dengan kolom Pengajar di
+// Manifest_Jadwal utk sesi (idTst) ini. Kalau cocok, sekalian kembalikan
+// roster peserta sesi itu (dari List_Pendaftar_TST) supaya scanner bisa
+// langsung menampilkan total daftar/hadir + daftar nama tanpa panggilan lagi.
+function verifikasiPengajar(idTst, namaPengajar) {
+  Logger.log('[DEBUG] verifikasiPengajar - idTst="' + idTst + '", namaPengajar="' + namaPengajar + '"');
+
+  const idTstBersih = String(idTst || '').trim();
+  const namaBersih  = String(namaPengajar || '').trim();
+
+  if (!idTstBersih) {
+    return { success: false, message: 'Sesi belum dipilih.', reason: 'sesi_belum_dipilih' };
+  }
+  if (!namaBersih) {
+    return { success: false, message: 'Mohon isi nama pengajar Anda.', reason: 'nama_kosong' };
+  }
+
+  const manifestRows = readSheet_(SHEET_MANIFEST).rows;
+  let sesiRow = null;
+  for (let i = 0; i < manifestRows.length; i++) {
+    const r = manifestRows[i];
+    if (!r[1]) continue;
+    if (String(r[6] || '').trim() === idTstBersih) {
+      sesiRow = r;
+      break;
+    }
+  }
+
+  if (!sesiRow) {
+    Logger.log('[DEBUG] verifikasiPengajar - GAGAL: idTst tidak ditemukan di Manifest_Jadwal');
+    return { success: false, message: 'Sesi tidak ditemukan. Coba pilih ulang sesi.', reason: 'sesi_tidak_ditemukan' };
+  }
+
+  const pengajarAsli = String(sesiRow[5] || '').trim(); // kolom F: Pengajar
+  const cocok = pengajarAsli.length > 0 && pengajarAsli.toLowerCase() === namaBersih.toLowerCase();
+
+  Logger.log('[DEBUG] verifikasiPengajar - input="' + namaBersih + '" vs asli="' + pengajarAsli + '" -> cocok=' + cocok);
+
+  if (!cocok) {
+    return {
+      success: false,
+      message: 'Nama pengajar tidak sesuai untuk sesi ini. Mohon periksa kembali.',
+      reason: 'pengajar_tidak_cocok'
+    };
+  }
+
+  // Kumpulkan roster peserta sesi ini dari List_Pendaftar_TST
+  const mapel = sesiRow[1];
+  const tglKey = keyDate_(sesiRow[2]);
+  const jamDisplay = displayTime_(sesiRow[3]);
+
+  const pendaftarRows = readSheet_(SHEET_PENDAFTAR).rows;
+  const roster = [];
+  pendaftarRows.forEach(function (r) {
+    if (!r[1]) return;
+    if (r[1] === mapel && keyDate_(r[2]) === tglKey && displayTime_(r[3]) === jamDisplay) {
+      roster.push({
+        noreg: String(r[4]).trim(),
+        nama: r[5],
+        kelas: r[6],
+        status: String(r[8] || 'Tidak Hadir').trim() || 'Tidak Hadir'
+      });
+    }
+  });
+
+  const totalDaftar = roster.length;
+  const totalHadir = roster.filter(function (x) { return x.status === 'Hadir'; }).length;
+
+  // Buat SESI TOKEN sementara (bukti "sudah lolos verifikasi pengajar utk idTst ini"),
+  // simpan di CacheService (bukan Sheet -> cepat & otomatis kedaluwarsa 4 jam).
+  // scanKehadiran() WAJIB menerima sesiToken yg cocok, supaya action=scan tidak bisa
+  // dipanggil langsung dari luar (curl/HTTPie/dsb) tanpa lolos verifikasi ini dulu.
+  const sesiToken = Utilities.getUuid();
+  CacheService.getScriptCache().put('sesi_' + sesiToken, idTstBersih, 4 * 60 * 60);
+
+  Logger.log('[DEBUG] verifikasiPengajar - BERHASIL, totalDaftar=' + totalDaftar + ', totalHadir=' + totalHadir + ', sesiToken diterbitkan');
+
+  return {
+    success: true,
+    message: 'Terverifikasi',
+    data: {
+      pengajar: pengajarAsli,
+      totalDaftar: totalDaftar,
+      totalHadir: totalHadir,
+      roster: roster,
+      sesiToken: sesiToken
+    }
+  };
+}
+
 // Dipanggil setiap kali scanner berhasil membaca 1 QR.
 // token: string dari isi QR (dicari di List_Token_Pendaftar_TST).
 // idTstDipilih: Id Tst dari sesi yang sedang dipilih pengawas di scanner.
-function scanKehadiran(token, idTstDipilih) {
-  Logger.log('[DEBUG] scanKehadiran - token diterima: "' + token + '" | idTstDipilih: "' + idTstDipilih + '"');
+// sesiToken: kode yang HANYA didapat dari verifikasiPengajar() yang berhasil —
+//            wajib ada & cocok, supaya endpoint ini tidak bisa dipanggil langsung
+//            dari luar (curl/HTTPie/dsb) tanpa lolos verifikasi nama pengajar dulu.
+function scanKehadiran(token, idTstDipilih, sesiToken) {
+  Logger.log('[DEBUG] scanKehadiran - token diterima: "' + token + '" | idTstDipilih: "' + idTstDipilih + '" | sesiToken: "' + sesiToken + '"');
 
   const lock = LockService.getScriptLock();
   let acquired = false;
@@ -403,12 +501,26 @@ function scanKehadiran(token, idTstDipilih) {
 
     const tokenBersih = String(token || '').trim();
     const idTstBersih = String(idTstDipilih || '').trim();
+    const sesiTokenBersih = String(sesiToken || '').trim();
 
     if (!tokenBersih) {
       return { success: false, message: 'QR TIDAK TERBACA', reason: 'token_kosong' };
     }
     if (!idTstBersih) {
       return { success: false, message: 'SESI BELUM DIPILIH', reason: 'sesi_belum_dipilih' };
+    }
+
+    // 0) WAJIB: pastikan request ini benar-benar berasal dari scanner yang sudah
+    //    lolos verifikasiPengajar() utk idTst ini — bukan panggilan langsung dari
+    //    luar (curl/HTTPie/Postman/dsb) yang melewati verifikasi sama sekali.
+    const idTstTerverifikasi = CacheService.getScriptCache().get('sesi_' + sesiTokenBersih);
+    if (!sesiTokenBersih || !idTstTerverifikasi || idTstTerverifikasi !== idTstBersih) {
+      Logger.log('[DEBUG] scanKehadiran - GAGAL: sesiToken tidak valid/kedaluwarsa/tidak cocok utk idTst ini');
+      return {
+        success: false,
+        message: 'SESI BELUM TERVERIFIKASI. Silakan verifikasi ulang lewat halaman scanner.',
+        reason: 'sesi_tidak_terverifikasi'
+      };
     }
 
     // 1) Cari token ini di List_Token_Pendaftar_TST
